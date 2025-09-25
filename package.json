@@ -1,19 +1,19 @@
 {
   "name": "ace-can",
   "version": "0.1.0",
-  "description": "A python-can like CAN bus library for Node.js (busust/pcan)",
+  "description": "A python-can like CAN bus library for Node.js (busmust/pcan)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "gypfile": true,
   "scripts": {
-    "install": "prebuildify --napi --strip --platform win32,darwin,linux || node-gyp rebuild",
+    "install": "node-gyp-build",
     "build": "npm run build:native && npm run build:ts",
     "build:native": "node-gyp rebuild",
     "build:ts": "tsc -p tsconfig.json",
     "prebuild": "prebuildify --napi --strip",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["can", "bus", "node-addon-api", "native", "busust", "pcan"],
+  "keywords": ["can", "bus", "node-addon-api", "native", "busmust", "pcan"],
   "author": "",
   "license": "MIT",
   "dependencies": {
