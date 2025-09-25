@@ -9,7 +9,7 @@
         "deps/pcan/include"
       ],
       "libraries": [
-        "<(module_root_dir)/deps/busust/lib/x64/BMAPI64.lib",
+        "<(module_root_dir)/deps/busmust/lib/x64/BMAPI64.lib",
         "<(module_root_dir)/deps/pcan/lib/x64/PCANBasic.lib"
       ],
       "cflags!": [ "-fno-exceptions" ],
