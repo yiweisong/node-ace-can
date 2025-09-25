@@ -2,7 +2,7 @@ import path from 'path';
 
 const loadNativeBinding: (dir?: string) => NativeModule = require('node-gyp-build');
 
-export type Bustype = 'busust' | 'pcan';
+export type Bustype = 'busmust' | 'pcan';
 
 export interface CANMessage {
   id: number;

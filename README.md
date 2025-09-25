@@ -1,6 +1,6 @@
 # ace-can
 
-> Node.js CAN bus bindings for Busust and Peak PCAN hardware.
+> Node.js CAN bus bindings for busmust and Peak PCAN hardware.
 
 ## Getting started
 
@@ -36,7 +36,7 @@ What the tests cover:
 - Static helper `CANBus.isAvailable()` and top-level `isAvailable()` utility.
 
 Because the tests mock the native layer, they are suitable for CI environments
-that lack Busust or PCAN hardware. For end-to-end validation against actual
+that lack busmust or PCAN hardware. For end-to-end validation against actual
 interfaces, set `ACE_CAN_CHANNEL`, `ACE_CAN_BUSTYPE`, and `ACE_CAN_BITRATE`
 environment variables in your own integration scripts and exercise the
 real hardware using the same API shown in `test/canbus-wrapper.test.cjs`.

@@ -23,7 +23,7 @@ private:
     std::string bustype_;
     int channel_;
     int bitrate_;
-    void* handle_ = nullptr; // BM_ChannelHandle for busust
+    void* handle_ = nullptr; // BM_ChannelHandle for busmust
     uint16_t pcan_handle_ = 0; // PCAN channel handle
     bool is_open_ = false;
 

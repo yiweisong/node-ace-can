@@ -107,7 +107,7 @@ CANBus::CANBus(const Napi::CallbackInfo& info) : Napi::ObjectWrap<CANBus>(info) 
     pcan_handle_ = PCAN_NONEBUS;
     is_open_ = false;
 
-    if (bustype_ == "busust") {
+    if (bustype_ == "busmust") {
         BM_StatusTypeDef status = BM_Init();
         if (status != 0) {
             Napi::Error::New(env, "BM_Init failed").ThrowAsJavaScriptException();
@@ -148,7 +148,7 @@ CANBus::~CANBus() {
     if (!is_open_) {
         return;
     }
-    if (bustype_ == "busust") {
+    if (bustype_ == "busmust") {
         if (handle_) {
             BM_Close(handle_);
             handle_ = nullptr;
@@ -187,9 +187,9 @@ Napi::Value CANBus::Send(const Napi::CallbackInfo& info) {
     uint32_t id = msgObj.Get("id").As<Napi::Number>().Uint32Value();
     Napi::Buffer<uint8_t> dataBuf = msgObj.Get("data").As<Napi::Buffer<uint8_t>>();
 
-    if (bustype_ == "busust") {
+    if (bustype_ == "busmust") {
         if (!handle_) {
-            Napi::Error::New(env, "busust handle not open").ThrowAsJavaScriptException();
+            Napi::Error::New(env, "busmust handle not open").ThrowAsJavaScriptException();
             return env.Undefined();
         }
         size_t dlc = std::min<size_t>(dataBuf.Length(), 64);
@@ -286,7 +286,7 @@ void CANBus::StartReceiveThread() {
                 continue;
             }
 
-            if (bustype_ == "busust") {
+            if (bustype_ == "busmust") {
                 if (!handle_) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(20));
                     continue;
@@ -396,7 +396,7 @@ Napi::Value CANBus::Close(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
 
-    if (bustype_ == "busust") {
+    if (bustype_ == "busmust") {
         if (handle_) {
             BM_Close(handle_);
             handle_ = nullptr;
@@ -419,7 +419,7 @@ Napi::Value CANBus::IsAvailable(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
     std::string bustype = info[0].As<Napi::String>().Utf8Value();
-    bool available = (bustype == "busust" || bustype == "pcan");
+    bool available = (bustype == "busmust" || bustype == "pcan");
     return Napi::Boolean::New(env, available);
 }
 

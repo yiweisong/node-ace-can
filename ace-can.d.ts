@@ -10,11 +10,11 @@
 /**
  * @class CANBus
  * @param {number} channel
- * @param {string} bustype - 'busust' | 'pcan'
+ * @param {string} bustype - 'busmust' | 'pcan'
  * @param {number} bitrate
  * @example
  *   const { CANBus } = require('ace-can');
- *   const can = new CANBus(0, 'busust', 500000);
+ *   const can = new CANBus(0, 'busmust', 500000);
  */
 
 /**
