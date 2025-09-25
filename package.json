@@ -11,7 +11,9 @@
     "build:native": "node-gyp rebuild",
     "build:ts": "tsc -p tsconfig.json",
     "prebuildify": "prebuildify --napi --strip",
-    "rebuild": "node-gyp rebuild"
+    "rebuild": "node-gyp rebuild",
+    "pretest": "npm run build:ts",
+    "test": "node --test test/**/*.test.cjs"
   },
   "keywords": ["can", "bus", "node-addon-api", "native", "busmust", "pcan"],
   "author": "Song Yiwei",
