@@ -10,11 +10,11 @@
     "build": "npm run build:native && npm run build:ts",
     "build:native": "node-gyp rebuild",
     "build:ts": "tsc -p tsconfig.json",
-    "prebuild": "prebuildify --napi --strip",
-    "prepublishOnly": "npm run build"
+    "prebuildify": "prebuildify --napi --strip",
+    "rebuild": "node-gyp rebuild"
   },
   "keywords": ["can", "bus", "node-addon-api", "native", "busmust", "pcan"],
-  "author": "",
+  "author": "Song Yiwei",
   "license": "MIT",
   "dependencies": {
     "node-addon-api": "^7.0.0",

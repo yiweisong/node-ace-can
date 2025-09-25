@@ -13,7 +13,7 @@ extern "C" {
 #include "bmapi.h"
 }
 
-#if defined(__linux__) || defined(__APPLE__)
+//#if defined(__linux__) || defined(__APPLE__)
 #ifndef __stdcall
 #define __stdcall
 #endif
@@ -32,7 +32,7 @@ using UINT64 = std::uint64_t;
 #ifndef LPSTR
 using LPSTR = char*;
 #endif
-#endif
+//#endif
 
 #include "PCANBasic.h"
 
