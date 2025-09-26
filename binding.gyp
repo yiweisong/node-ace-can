@@ -15,7 +15,19 @@
       "cflags!": [ "-fno-exceptions" ],
       "cflags_cc!": [ "-fno-exceptions" ],
       "defines": [ "NAPI_DISABLE_CPP_EXCEPTIONS" ],
-      "dependencies": [ "<!(node -p \"require('node-addon-api').gyp\")" ]
+      "dependencies": [ "<!(node -p \"require('node-addon-api').gyp\")" ],
+      "conditions": [
+        ['OS=="win"',
+          {
+            'msvs_settings': {
+              'VCCLCompilerTool': { 'ExceptionHandling': 1 },
+              'VCLinkerTool':{
+                'DelayLoadDLLs':['BMAPI64.dll','PCANBasic.dll']
+              }
+            }
+          }
+        ]
+      ]
     }
   ]
 }
