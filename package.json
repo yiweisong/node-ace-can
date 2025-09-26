@@ -15,7 +15,14 @@
     "pretest": "npm run build:ts",
     "test": "node --test test/**/*.test.cjs"
   },
-  "keywords": ["can", "bus", "node-addon-api", "native", "busmust", "pcan"],
+  "keywords": [
+    "can",
+    "bus",
+    "node-addon-api",
+    "native",
+    "busmust",
+    "pcan"
+  ],
   "author": "Song Yiwei",
   "license": "MIT",
   "dependencies": {
@@ -23,9 +30,9 @@
     "node-gyp-build": "^4.8.0"
   },
   "devDependencies": {
-    "prebuildify": "^5.0.0",
+    "@types/node": "^20.11.0",
     "node-gyp": "^10.0.0",
-    "typescript": "^5.4.0",
-    "@types/node": "^20.11.0"
+    "prebuildify": "^6.0.1",
+    "typescript": "^5.4.0"
   }
 }
