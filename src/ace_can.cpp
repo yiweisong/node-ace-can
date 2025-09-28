@@ -7,10 +7,19 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <cerrno>
 #include <iomanip>
 #include <sstream>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <poll.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 #include "bmapi.h"
@@ -275,6 +284,24 @@ CANBus::CANBus(const Napi::CallbackInfo& info) : Napi::ObjectWrap<CANBus>(info) 
             return;
         }
         pcan_handle_ = resolved;
+#ifdef _WIN32
+        HANDLE eventHandle = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        if (eventHandle != nullptr) {
+            HANDLE value = eventHandle;
+            TPCANStatus eventStatus = CAN_SetValue(pcan_handle_, PCAN_RECEIVE_EVENT, &value, static_cast<DWORD>(sizeof(value)));
+            if (eventStatus == PCAN_ERROR_OK) {
+                pcan_event_handle_ = eventHandle;
+            } else {
+                CloseHandle(eventHandle);
+            }
+        }
+#else
+        int eventFd = -1;
+        TPCANStatus eventStatus = CAN_GetValue(pcan_handle_, PCAN_RECEIVE_EVENT, &eventFd, static_cast<DWORD>(sizeof(eventFd)));
+        if (eventStatus == PCAN_ERROR_OK && eventFd >= 0) {
+            pcan_event_fd_ = eventFd;
+        }
+#endif
         is_open_ = true;
     } else {
         Napi::Error::New(env, "Unsupported bustype: " + bustype_).ThrowAsJavaScriptException();
@@ -297,6 +324,7 @@ CANBus::~CANBus() {
             busmust_registered_ = false;
         }
     } else if (bustype_ == "pcan") {
+        DetachPcanEvent();
         if (pcan_handle_ != PCAN_NONEBUS) {
             CAN_Uninitialize(pcan_handle_);
             pcan_handle_ = PCAN_NONEBUS;
@@ -481,31 +509,74 @@ void CANBus::StartReceiveThread() {
                     std::this_thread::sleep_for(std::chrono::milliseconds(20));
                     continue;
                 }
-                TPCANMsg msg = {};
-                TPCANStatus status = CAN_Read(pcan_handle_, &msg, nullptr);
-                if (status == PCAN_ERROR_OK) {
-                    if (tsfn_message_) {
-                        auto callback = [msg](Napi::Env env, Napi::Function jsCallback) {
-                            Napi::Object jsMsg = Napi::Object::New(env);
-                            bool extended = (msg.MSGTYPE & PCAN_MESSAGE_EXTENDED) != 0;
-                            uint32_t canid = msg.ID;
-                            if (!extended) {
-                                canid &= 0x7FF;
-                            }
-                            size_t dlc = std::min<size_t>(msg.LEN, 8);
-                            jsMsg.Set("id", Napi::Number::New(env, canid));
-                            jsMsg.Set("data", Napi::Buffer<uint8_t>::Copy(env, msg.DATA, dlc));
-                            jsCallback.Call({jsMsg});
-                        };
-                        if (tsfn_message_.BlockingCall(callback) != napi_ok) {
-                            break;
-                        }
+                bool ready = (pcan_event_handle_ == nullptr && pcan_event_fd_ < 0);
+#ifdef _WIN32
+                if (pcan_event_handle_) {
+                    HANDLE waitHandle = static_cast<HANDLE>(pcan_event_handle_);
+                    DWORD waitResult = WaitForSingleObject(waitHandle, 50);
+                    if (waitResult == WAIT_OBJECT_0) {
+                        ready = true;
+                    } else if (waitResult == WAIT_TIMEOUT) {
+                        ready = false;
+                    } else {
+                        DWORD lastError = (waitResult == WAIT_FAILED) ? GetLastError() : waitResult;
+                        EmitError(static_cast<int>(lastError), "PCAN receive event wait failed");
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        ready = false;
                     }
-                } else if (status == PCAN_ERROR_QRCVEMPTY) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                } else {
-                    EmitError(static_cast<int>(status), PcanStatusToString(status));
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+#else
+                if (pcan_event_fd_ >= 0) {
+                    struct pollfd pfd;
+                    std::memset(&pfd, 0, sizeof(pfd));
+                    pfd.fd = pcan_event_fd_;
+                    pfd.events = POLLIN;
+                    int pollResult = poll(&pfd, 1, 50);
+                    if (pollResult > 0 && (pfd.revents & POLLIN) != 0) {
+                        ready = true;
+                    } else if (pollResult == 0 || (pollResult < 0 && errno == EINTR)) {
+                        ready = false;
+                    } else if (pollResult < 0) {
+                        EmitError(errno, "PCAN receive event poll failed");
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        ready = false;
+                    }
+                }
+#endif
+                if (!ready) {
+                    continue;
+                }
+
+                while (recv_running_) {
+                    TPCANMsg msg = {};
+                    TPCANStatus status = CAN_Read(pcan_handle_, &msg, nullptr);
+                    if (status == PCAN_ERROR_OK) {
+                        if (tsfn_message_) {
+                            auto callback = [msg](Napi::Env env, Napi::Function jsCallback) {
+                                Napi::Object jsMsg = Napi::Object::New(env);
+                                bool extended = (msg.MSGTYPE & PCAN_MESSAGE_EXTENDED) != 0;
+                                uint32_t canid = msg.ID;
+                                if (!extended) {
+                                    canid &= 0x7FF;
+                                }
+                                size_t dlc = std::min<size_t>(msg.LEN, 8);
+                                jsMsg.Set("id", Napi::Number::New(env, canid));
+                                jsMsg.Set("data", Napi::Buffer<uint8_t>::Copy(env, msg.DATA, dlc));
+                                jsCallback.Call({jsMsg});
+                            };
+                            if (tsfn_message_.BlockingCall(callback) != napi_ok) {
+                                recv_running_ = false;
+                                break;
+                            }
+                        }
+                    } else if (status == PCAN_ERROR_QRCVEMPTY) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                        break;
+                    } else {
+                        EmitError(static_cast<int>(status), PcanStatusToString(status));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        break;
+                    }
                 }
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -516,6 +587,11 @@ void CANBus::StartReceiveThread() {
 
 void CANBus::StopReceiveThread() {
     recv_running_ = false;
+#ifdef _WIN32
+    if (bustype_ == "pcan" && pcan_event_handle_) {
+        SetEvent(static_cast<HANDLE>(pcan_event_handle_));
+    }
+#endif
     if (recv_thread_.joinable()) {
         recv_thread_.join();
     }
@@ -549,6 +625,23 @@ void CANBus::EmitError(int code, const std::string& message) {
     tsfn_error_.BlockingCall(callback);
 }
 
+void CANBus::DetachPcanEvent() {
+#ifdef _WIN32
+    if (pcan_event_handle_) {
+        if (pcan_handle_ != PCAN_NONEBUS) {
+            HANDLE nullHandle = nullptr;
+            CAN_SetValue(pcan_handle_, PCAN_RECEIVE_EVENT, &nullHandle, static_cast<DWORD>(sizeof(nullHandle)));
+        }
+        CloseHandle(static_cast<HANDLE>(pcan_event_handle_));
+        pcan_event_handle_ = nullptr;
+    }
+#else
+    if (pcan_event_fd_ >= 0) {
+        pcan_event_fd_ = -1;
+    }
+#endif
+}
+
 Napi::Value CANBus::Close(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     StopReceiveThread();
@@ -569,6 +662,7 @@ Napi::Value CANBus::Close(const Napi::CallbackInfo& info) {
             busmust_registered_ = false;
         }
     } else if (bustype_ == "pcan") {
+        DetachPcanEvent();
         if (pcan_handle_ != PCAN_NONEBUS) {
             CAN_Uninitialize(pcan_handle_);
             pcan_handle_ = PCAN_NONEBUS;

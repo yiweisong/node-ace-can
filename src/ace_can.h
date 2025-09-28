@@ -26,6 +26,8 @@ private:
     void* handle_ = nullptr; // BM_ChannelHandle for busmust
     void* notification_handle_ = nullptr; // BM_NotificationHandle for busmust
     uint16_t pcan_handle_ = 0; // PCAN channel handle
+    void* pcan_event_handle_ = nullptr; // Platform event handle for PCAN (Windows)
+    int pcan_event_fd_ = -1; // File descriptor for PCAN receive event (POSIX)
     bool is_open_ = false;
     bool busmust_registered_ = false;
 
@@ -33,6 +35,7 @@ private:
     void StartReceiveThread();
     void StopReceiveThread();
     void EmitError(int code, const std::string& message);
+    void DetachPcanEvent();
 
     std::thread recv_thread_;
     std::atomic<bool> recv_running_{false};
