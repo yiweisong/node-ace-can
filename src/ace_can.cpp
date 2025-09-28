@@ -2,18 +2,20 @@
 #include <napi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
 #include <sstream>
 #include <thread>
+#include <vector>
 
 extern "C" {
 #include "bmapi.h"
 }
 
-//#if defined(__linux__) || defined(__APPLE__)
 #ifndef __stdcall
 #define __stdcall
 #endif
@@ -32,13 +34,15 @@ using UINT64 = std::uint64_t;
 #ifndef LPSTR
 using LPSTR = char*;
 #endif
-//#endif
 
 #include "PCANBasic.h"
 
 namespace {
 
+constexpr uint16_t kBusmustLanguageEnglish = 0x09;
 constexpr WORD kPcanLanguageEnglish = 0x09;
+
+std::atomic<int> g_busmust_instance_count{0};
 
 TPCANBaudrate MapPcanBaudrate(int bitrate) {
     switch (bitrate) {
@@ -68,6 +72,32 @@ TPCANHandle ResolvePcanChannelHandle(int channel) {
         return static_cast<TPCANHandle>(PCAN_USBBUS1 + (channel - 1));
     }
     return PCAN_NONEBUS;
+}
+
+std::string BusmustStatusToString(BM_StatusTypeDef status) {
+    char buffer[256] = {0};
+    BM_GetErrorText(status, buffer, sizeof(buffer), kBusmustLanguageEnglish);
+    if (buffer[0] != '\0') {
+        return std::string(buffer);
+    }
+    std::ostringstream oss;
+    oss << "BM error 0x" << std::hex << std::uppercase << status;
+    return oss.str();
+}
+
+bool BuildBusmustBitrate(int bitrate, BM_BitrateTypeDef& out) {
+    if (bitrate <= 0 || (bitrate % 1000) != 0) {
+        return false;
+    }
+    std::memset(&out, 0, sizeof(out));
+    out.nbitrate = static_cast<uint16_t>(bitrate / 1000);
+    out.nsamplepos = 75; // default sample point in percent
+    out.dsamplepos = 75;
+    return out.nbitrate != 0;
+}
+
+bool BusmustSupportsCan(const BM_ChannelInfoTypeDef& info) {
+    return (info.cap & (BM_CAN_CAP | BM_CAN_FD_CAP)) != 0;
 }
 
 std::string PcanStatusToString(TPCANStatus status) {
@@ -101,24 +131,132 @@ CANBus::CANBus(const Napi::CallbackInfo& info) : Napi::ObjectWrap<CANBus>(info) 
     }
 
     channel_ = info[0].As<Napi::Number>().Int32Value();
-    bustype_ = info[1].As<Napi::String>().Utf8Value();
+    std::string requestedBustype = info[1].As<Napi::String>().Utf8Value();
+    std::transform(requestedBustype.begin(), requestedBustype.end(), requestedBustype.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (requestedBustype == "busust") {
+        requestedBustype = "busmust";
+    }
+    bustype_ = requestedBustype;
     bitrate_ = info[2].As<Napi::Number>().Int32Value();
     handle_ = nullptr;
+    notification_handle_ = nullptr;
     pcan_handle_ = PCAN_NONEBUS;
     is_open_ = false;
 
     if (bustype_ == "busmust") {
-        BM_StatusTypeDef status = BM_Init();
-        if (status != 0) {
-            Napi::Error::New(env, "BM_Init failed").ThrowAsJavaScriptException();
+        if (channel_ < 0) {
+            Napi::TypeError::New(env, "Busmust channel must be >= 0").ThrowAsJavaScriptException();
             return;
         }
-        handle_ = BM_OpenCan(static_cast<uint16_t>(channel_));
-        if (!handle_) {
-            BM_UnInit();
-            Napi::Error::New(env, "BM_OpenCan failed").ThrowAsJavaScriptException();
+
+        auto cleanup_and_throw = [&](const std::string& message) {
+            if (handle_) {
+                BM_Close(static_cast<BM_ChannelHandle>(handle_));
+                handle_ = nullptr;
+            }
+            if (busmust_registered_) {
+                if (g_busmust_instance_count.fetch_sub(1) == 1) {
+                    BM_UnInit();
+                }
+                busmust_registered_ = false;
+            }
+            if (!message.empty()) {
+                Napi::Error::New(env, message).ThrowAsJavaScriptException();
+            }
+        };
+
+        if (g_busmust_instance_count.fetch_add(1) == 0) {
+            BM_StatusTypeDef initStatus = BM_Init();
+            if (initStatus != BM_ERROR_OK) {
+                g_busmust_instance_count.fetch_sub(1);
+                Napi::Error::New(env, "BM_Init failed: " + BusmustStatusToString(initStatus)).ThrowAsJavaScriptException();
+                return;
+            }
+        }
+        busmust_registered_ = true;
+
+        BM_BitrateTypeDef bitrateConfig{};
+        if (!BuildBusmustBitrate(bitrate_, bitrateConfig)) {
+            cleanup_and_throw("Unsupported Busmust bitrate (must be multiple of 1 kbps)");
             return;
         }
+
+        std::vector<BM_ChannelInfoTypeDef> channels;
+        channels.reserve(16);
+        BM_StatusTypeDef status = BM_ERROR_OK;
+        int enumerated = 0;
+        bool enumeration_success = false;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            int capacity = static_cast<int>(channels.capacity());
+            if (capacity == 0) {
+                capacity = 16;
+                channels.reserve(capacity);
+            }
+            channels.assign(capacity, {});
+            enumerated = capacity;
+            status = BM_Enumerate(channels.data(), &enumerated);
+            if (status != BM_ERROR_OK) {
+                break;
+            }
+            if (enumerated <= capacity) {
+                channels.resize(enumerated);
+                enumeration_success = true;
+                break;
+            }
+            channels.reserve(capacity * 2);
+        }
+
+        if (status != BM_ERROR_OK) {
+            cleanup_and_throw("BM_Enumerate failed: " + BusmustStatusToString(status));
+            return;
+        }
+
+        if (!enumeration_success) {
+            cleanup_and_throw("BM_Enumerate ran out of buffer space");
+            return;
+        }
+
+        if (channels.empty()) {
+            cleanup_and_throw("No Busmust channels detected");
+            return;
+        }
+
+        if (channel_ >= static_cast<int>(channels.size())) {
+            cleanup_and_throw("Busmust channel index out of range");
+            return;
+        }
+
+        BM_ChannelInfoTypeDef channelInfo = channels[channel_];
+        if (!BusmustSupportsCan(channelInfo)) {
+            cleanup_and_throw("Selected Busmust channel does not support CAN");
+            return;
+        }
+
+        BM_ChannelHandle openedHandle = nullptr;
+        status = BM_OpenEx(
+            &openedHandle,
+            &channelInfo,
+            BM_CAN_NORMAL_MODE,
+            BM_TRESISTOR_120,
+            &bitrateConfig,
+            nullptr,
+            0);
+        if (status != BM_ERROR_OK || openedHandle == nullptr) {
+            cleanup_and_throw("BM_OpenEx failed: " + BusmustStatusToString(status));
+            return;
+        }
+
+        handle_ = openedHandle;
+
+        BM_NotificationHandle notification = nullptr;
+        status = BM_GetNotification(openedHandle, &notification);
+        if (status != BM_ERROR_OK || notification == nullptr) {
+            cleanup_and_throw("BM_GetNotification failed: " + BusmustStatusToString(status));
+            return;
+        }
+        notification_handle_ = notification;
+
         is_open_ = true;
     } else if (bustype_ == "pcan") {
         TPCANHandle resolved = ResolvePcanChannelHandle(channel_);
@@ -145,21 +283,26 @@ CANBus::CANBus(const Napi::CallbackInfo& info) : Napi::ObjectWrap<CANBus>(info) 
 
 CANBus::~CANBus() {
     StopReceiveThread();
-    if (!is_open_) {
-        return;
-    }
+
     if (bustype_ == "busmust") {
         if (handle_) {
-            BM_Close(handle_);
+            BM_Close(static_cast<BM_ChannelHandle>(handle_));
             handle_ = nullptr;
         }
-        BM_UnInit();
+        notification_handle_ = nullptr;
+        if (busmust_registered_) {
+            if (g_busmust_instance_count.fetch_sub(1) == 1) {
+                BM_UnInit();
+            }
+            busmust_registered_ = false;
+        }
     } else if (bustype_ == "pcan") {
         if (pcan_handle_ != PCAN_NONEBUS) {
             CAN_Uninitialize(pcan_handle_);
             pcan_handle_ = PCAN_NONEBUS;
         }
     }
+
     is_open_ = false;
 }
 
@@ -189,7 +332,7 @@ Napi::Value CANBus::Send(const Napi::CallbackInfo& info) {
 
     if (bustype_ == "busmust") {
         if (!handle_) {
-            Napi::Error::New(env, "busmust handle not open").ThrowAsJavaScriptException();
+            Napi::Error::New(env, "Busmust handle not open").ThrowAsJavaScriptException();
             return env.Undefined();
         }
         size_t dlc = std::min<size_t>(dataBuf.Length(), 64);
@@ -209,10 +352,11 @@ Napi::Value CANBus::Send(const Napi::CallbackInfo& info) {
         std::memcpy(msg.payload, dataBuf.Data(), dlc);
 
         uint32_t timestamp = 0;
-        BM_StatusTypeDef status = BM_WriteCanMessage(handle_, &msg, 0, 100, &timestamp);
-        if (status != 0) {
-            EmitError(static_cast<int>(status), "BM_WriteCanMessage failed");
-            Napi::Error::New(env, "BM_WriteCanMessage failed").ThrowAsJavaScriptException();
+        BM_StatusTypeDef status = BM_WriteCanMessage(static_cast<BM_ChannelHandle>(handle_), &msg, 0, 100, &timestamp);
+        if (status != BM_ERROR_OK) {
+            std::string reason = BusmustStatusToString(status);
+            EmitError(static_cast<int>(status), reason);
+            Napi::Error::New(env, "BM_WriteCanMessage failed: " + reason).ThrowAsJavaScriptException();
         }
     } else if (bustype_ == "pcan") {
         if (pcan_handle_ == PCAN_NONEBUS) {
@@ -287,34 +431,50 @@ void CANBus::StartReceiveThread() {
             }
 
             if (bustype_ == "busmust") {
-                if (!handle_) {
+                auto channelHandle = static_cast<BM_ChannelHandle>(handle_);
+                if (!channelHandle) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(20));
                     continue;
                 }
-                BM_CanMessageTypeDef msg = {};
-                uint32_t channel = 0;
-                uint32_t timestamp = 0;
-                BM_StatusTypeDef status = BM_ReadCanMessage(handle_, &msg, &channel, &timestamp);
-                if (status == 0) {
-                    if (tsfn_message_) {
-                        auto callback = [msg](Napi::Env env, Napi::Function jsCallback) {
-                            Napi::Object jsMsg = Napi::Object::New(env);
-                            bool extended = msg.ctrl.rx.IDE != 0;
-                            uint32_t canid = extended ? BM_GET_EXT_MSG_ID(msg.id) : BM_GET_STD_MSG_ID(msg.id);
-                            size_t dlc = std::min<size_t>(msg.ctrl.rx.DLC, 64);
-                            jsMsg.Set("id", Napi::Number::New(env, canid));
-                            jsMsg.Set("data", Napi::Buffer<uint8_t>::Copy(env, msg.payload, dlc));
-                            jsCallback.Call({jsMsg});
-                        };
-                        if (tsfn_message_.BlockingCall(callback) != napi_ok) {
-                            break;
-                        }
+
+                if (notification_handle_) {
+                    BM_NotificationHandle handles[1] = { static_cast<BM_NotificationHandle>(notification_handle_) };
+                    int waitResult = BM_WaitForNotifications(handles, 1, 50);
+                    if (waitResult < 0) {
+                        continue;
                     }
-                } else if (status == BM_ERROR_QRCVEMPTY) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 } else {
-                    EmitError(static_cast<int>(status), "BM_ReadCanMessage error");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+
+                while (recv_running_) {
+                    BM_CanMessageTypeDef msg = {};
+                    uint32_t channel = 0;
+                    uint32_t timestamp = 0;
+                    BM_StatusTypeDef status = BM_ReadCanMessage(channelHandle, &msg, &channel, &timestamp);
+                    if (status == BM_ERROR_OK) {
+                        if (tsfn_message_) {
+                            auto callback = [msg](Napi::Env env, Napi::Function jsCallback) {
+                                Napi::Object jsMsg = Napi::Object::New(env);
+                                bool extended = msg.ctrl.rx.IDE != 0;
+                                uint32_t canid = extended ? BM_GET_EXT_MSG_ID(msg.id) : BM_GET_STD_MSG_ID(msg.id);
+                                size_t dlc = std::min<size_t>(msg.ctrl.rx.DLC, 64);
+                                jsMsg.Set("id", Napi::Number::New(env, canid));
+                                jsMsg.Set("data", Napi::Buffer<uint8_t>::Copy(env, msg.payload, dlc));
+                                jsCallback.Call({jsMsg});
+                            };
+                            if (tsfn_message_.BlockingCall(callback) != napi_ok) {
+                                recv_running_ = false;
+                                break;
+                            }
+                        }
+                    } else if (status == BM_ERROR_QRCVEMPTY) {
+                        break;
+                    } else {
+                        EmitError(static_cast<int>(status), BusmustStatusToString(status));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        break;
+                    }
                 }
             } else if (bustype_ == "pcan") {
                 if (pcan_handle_ == PCAN_NONEBUS) {
@@ -398,10 +558,16 @@ Napi::Value CANBus::Close(const Napi::CallbackInfo& info) {
 
     if (bustype_ == "busmust") {
         if (handle_) {
-            BM_Close(handle_);
+            BM_Close(static_cast<BM_ChannelHandle>(handle_));
             handle_ = nullptr;
         }
-        BM_UnInit();
+        notification_handle_ = nullptr;
+        if (busmust_registered_) {
+            if (g_busmust_instance_count.fetch_sub(1) == 1) {
+                BM_UnInit();
+            }
+            busmust_registered_ = false;
+        }
     } else if (bustype_ == "pcan") {
         if (pcan_handle_ != PCAN_NONEBUS) {
             CAN_Uninitialize(pcan_handle_);
@@ -419,6 +585,12 @@ Napi::Value CANBus::IsAvailable(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
     std::string bustype = info[0].As<Napi::String>().Utf8Value();
+    std::transform(bustype.begin(), bustype.end(), bustype.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (bustype == "busust") {
+        bustype = "busmust";
+    }
     bool available = (bustype == "busmust" || bustype == "pcan");
     return Napi::Boolean::New(env, available);
 }

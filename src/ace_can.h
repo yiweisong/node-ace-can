@@ -24,8 +24,10 @@ private:
     int channel_;
     int bitrate_;
     void* handle_ = nullptr; // BM_ChannelHandle for busmust
+    void* notification_handle_ = nullptr; // BM_NotificationHandle for busmust
     uint16_t pcan_handle_ = 0; // PCAN channel handle
     bool is_open_ = false;
+    bool busmust_registered_ = false;
 
     // --- 事件接收相关 ---
     void StartReceiveThread();
