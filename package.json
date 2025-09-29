@@ -6,7 +6,7 @@
   "types": "dist/index.d.ts",
   "gypfile": true,
   "scripts": {
-    "install": "node-gyp-build",
+    "install": "node -e \"if (process.platform === 'win32') require('node-gyp-build')(); else console.log('Skipping native build on', process.platform);\"",
     "build": "rm -rf dist && npm run build:ts",
     "build:native": "node-gyp rebuild",
     "build:ts": "tsc -p tsconfig.json",

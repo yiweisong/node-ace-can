@@ -23,7 +23,7 @@ interface NativeModule {
 }
 
 interface NativeCANBusConstructor {
-  new (channel: number, bustype: Bustype, bitrate: number): NativeCANBusInstance;
+  new(channel: number, bustype: Bustype, bitrate: number): NativeCANBusInstance;
   isAvailable(bustype: Bustype): boolean;
 }
 
@@ -35,8 +35,31 @@ interface NativeCANBusInstance {
   close(): void;
 }
 
-const native: NativeModule = loadNativeBinding(path.resolve(__dirname, '..'));
-const { CANBus: NativeCANBus } = native;
+let nativeBinding: NativeModule | null = null;
+try {
+  nativeBinding = loadNativeBinding(path.resolve(__dirname, '..'));
+} catch (err) {
+  if (process.platform === 'darwin') {
+    nativeBinding = null;
+  } else {
+    throw err;
+  }
+}
+
+
+const { CANBus: NativeCANBus } = nativeBinding ?? {
+  CANBus: class {
+    constructor() {
+      console.log('Warning: ace-can native module is not available on macOS. This is a stub implementation.');
+    }
+    static isAvailable(): boolean {
+      return false;
+    }
+    send() { }
+    on() { return this; }
+    close() { }
+  },
+};
 
 export class CANBus {
   private readonly native: NativeCANBusInstance;
