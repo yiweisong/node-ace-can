@@ -19,6 +19,3 @@ build/
 *.md
 tsconfig-build.json
 tsconfig.json
-
-src/
-binding.gyp
