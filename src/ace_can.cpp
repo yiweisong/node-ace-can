@@ -14,7 +14,7 @@
 #include <vector>
 
 #ifdef _WIN32
-#define NOMINMAX
+// #define NOMINMAX
 #include <windows.h>
 #else
 #include <poll.h>
@@ -28,6 +28,7 @@ extern "C" {
 #ifndef __stdcall
 #define __stdcall
 #endif
+#if defined(__linux__) || defined(__APPLE__)
 #ifndef BYTE
 using BYTE = unsigned char;
 #endif
@@ -42,6 +43,7 @@ using UINT64 = std::uint64_t;
 #endif
 #ifndef LPSTR
 using LPSTR = char*;
+#endif
 #endif
 
 #include "PCANBasic.h"

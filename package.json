@@ -7,13 +7,14 @@
   "gypfile": true,
   "scripts": {
     "install": "node-gyp-build",
-    "build": "npm run build:native && npm run build:ts",
+    "build": "rm -rf dist && npm run build:ts",
     "build:native": "node-gyp rebuild",
     "build:ts": "tsc -p tsconfig.json",
-    "prebuildify": "prebuildify --napi --strip",
+    "prebuildify": "prebuildify --napi --target 22.0.0 --strip",
     "rebuild": "node-gyp rebuild",
     "pretest": "npm run build:ts",
-    "test": "node --test test/**/*.test.cjs"
+    "test": "node --test test/**/*.test.cjs",
+    "semantic-release": "semantic-release"
   },
   "keywords": [
     "can",
@@ -30,6 +31,8 @@
     "node-gyp-build": "^4.8.0"
   },
   "devDependencies": {
+    "@semantic-release/exec": "6.0.3",
+    "semantic-release": "19.0.2",
     "@types/node": "^20.11.0",
     "node-gyp": "^10.0.0",
     "prebuildify": "^6.0.1",
