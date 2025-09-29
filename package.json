@@ -1,20 +1,18 @@
 {
   "name": "ace-can",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A python-can like CAN bus library for Node.js (busmust/pcan)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "gypfile": true,
   "scripts": {
-    "install": "node -e \"if (process.platform === 'win32') require('node-gyp-build')(); else console.log('Skipping native build on', process.platform);\"",
-    "build": "rm -rf dist && npm run build:ts",
-    "build:native": "node-gyp rebuild",
-    "build:ts": "tsc -p tsconfig.json",
+    "install": "echo 'Fake install'",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
     "prebuildify": "prebuildify --napi --target 22.0.0 --strip",
-    "rebuild": "node-gyp rebuild",
-    "pretest": "npm run build:ts",
     "test": "node --test test/**/*.test.cjs",
-    "semantic-release": "semantic-release"
+    "semantic-release": "semantic-release",
+    "//install": "node-gyp-build",
+    "//rebuild": "node-gyp rebuild",
   },
   "keywords": [
     "can",
