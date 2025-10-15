@@ -59,6 +59,7 @@ jobs:
         run: npm install -g npm@latest
       - run: npm ci --ignore-scripts
       - run: npm config set registry https://registry.npmjs.org
+      - run: npm config list
       - run: npm run build
       - run: npm publish --access public
 
@@ -70,6 +71,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload npm internal logs artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: npm-internal-logs
