@@ -6,7 +6,7 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -60,7 +60,20 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm config set registry https://registry.npmjs.org
       - run: npm run build
-      - run: npm publish
+      - run: npm publish --access public
+
+      - name: Upload npm internal logs
+        if: always()
+        run: |
+          mkdir -p npm-internal-logs
+          cp -v $HOME/.npm/_logs/*.log npm-internal-logs/ || true
+        continue-on-error: true
+
+      - name: Upload npm internal logs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-internal-logs
+          path: npm-internal-logs
       # - run: npm run semantic-release
       #   env:
       #     GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
