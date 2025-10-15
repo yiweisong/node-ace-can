@@ -58,17 +58,8 @@ jobs:
       - name: Update npm
         run: npm install -g npm@latest
       - run: npm ci --ignore-scripts
-      # - run: npm config set registry https://registry.npmjs.org
+      - run: npm config set registry https://registry.npmjs.org
       - run: npm run build
-      
-      - name: Configure npm auth for publish
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm config set registry https://registry.npmjs.org
-          npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
-          npm config set always-auth true
-
       - run: npm publish
       # - run: npm run semantic-release
       #   env:
